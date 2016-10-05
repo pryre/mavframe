@@ -1,0 +1,9 @@
+<launch>
+	<node pkg="mavframe" type="mavframe_node" name="mavframe" clear_params="true" output="screen">
+		<!-- Connection Parameters -->
+		<param name="loop_rate" value="30.0" type="double"/>
+		<param name="input_frame" value="/fcu" type="str"/>
+		<param name="local_frame" value="/world" type="str"/>
+		<param name="robot_name" value="/uav" type="str"/>
+	</node>
+</launch>
