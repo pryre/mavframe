@@ -115,9 +115,7 @@ int main(int argc, char **argv)
 
 			geometry_msgs::Vector3 rot;
 			tf::Matrix3x3(worldTransform.getRotation()).getRPY(rot.x, rot.y, rot.z);
-			tf::Quaternion q;
-			q.setRPY(0.0, 0.0, rot.z);
-			flatTransform.setRotation(q);
+			flatTransform.setRotation(tf::createQuaternionFromYaw(rot.z));
 
 			//att_link		================================================================
 			attTransform.setOrigin( tf::Vector3(0.0, 0.0, 0.0) );
