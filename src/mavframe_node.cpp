@@ -7,11 +7,56 @@
 #include <ros/ros.h>
 
 #include <tf/tf.h>
-#include <tf/transform_listener.h>
 #include <tf/transform_broadcaster.h>
+#include <geometry_msgs/TransformStamped.h>
 
 #include <string.h>
 #include <math.h>
+
+
+tf::TransformBroadcaster* tfbr;
+
+std::string inputFrame = "/fcu";
+std::string localFrame = "/world";
+std::string robotName = "/uav";
+
+std::string baseFrame;
+std::string flatFrame;
+std::string attFrame;
+
+
+void pos_cb(const geometry_msgs::TransformStamped::ConstPtr& msg) {
+	ROS_INFO_ONCE( "...Broadcasting!" );
+
+	tf::StampedTransform worldTransform;
+	tf::transformStampedMsgToTF(*msg, worldTransform);
+
+	tf::Transform baseTransform;
+	tf::Transform flatTransform;
+	tf::Transform attTransform;
+	//========================================================================
+
+	baseTransform.setOrigin( worldTransform.getOrigin() );
+
+	baseTransform.setRotation( tf::Quaternion(0.0, 0.0, 0.0, 1.0) ); //Set it to zero heading
+
+	//flat_link		================================================================
+	flatTransform.setOrigin( tf::Vector3(0.0, 0.0, 0.0) );
+
+	geometry_msgs::Vector3 rot;
+	tf::Matrix3x3(worldTransform.getRotation()).getRPY(rot.x, rot.y, rot.z);
+	flatTransform.setRotation(tf::createQuaternionFromYaw(rot.z));
+
+	//att_link		================================================================
+	attTransform.setOrigin( tf::Vector3(0.0, 0.0, 0.0) );
+
+	attTransform.setRotation(worldTransform.getRotation());
+
+	//Send Transforms	============================================================
+	tfbr->sendTransform( tf::StampedTransform( baseTransform, worldTransform.stamp_, localFrame, baseFrame ) );
+	tfbr->sendTransform( tf::StampedTransform( flatTransform, worldTransform.stamp_, baseFrame, flatFrame ) );
+	tfbr->sendTransform( tf::StampedTransform( attTransform, worldTransform.stamp_, baseFrame, attFrame ) );
+}
 
 //================================//
 // Main Function                  //
@@ -23,18 +68,6 @@ int main(int argc, char **argv)
 	//================================//
 	ros::init(argc, argv, "mavframe" );
 	ros::NodeHandle nh( ros::this_node::getName() );
-
-	double loopRate = 50.0;
-	bool sendData = false;
-
-	std::string inputFrame = "/fcu";
-	std::string localFrame = "/world";
-	std::string robotName = "/uav";
-
-	if( !nh.getParam( "loop_rate", loopRate ) ) {
-		ROS_WARN( "No parameter set for \"loop_rate\", using: %0.2f", loopRate );
-	}
-	ROS_INFO( "Update rate: %0.2f", loopRate );
 
 	if( !nh.getParam( "input_frame", inputFrame ) ) {
 		ROS_WARN( "No parameter set for \"input_frame\", using: %s", inputFrame.c_str() );
@@ -51,91 +84,23 @@ int main(int argc, char **argv)
 	}
 	ROS_INFO( "Robot name: %s", robotName.c_str() );
 
-	std::string baseFrame = robotName + "/base_link";
-	std::string flatFrame = robotName + "/hdg_link";
-	std::string attFrame = robotName + "/att_link";
+	baseFrame = robotName + "/base_link";
+	flatFrame = robotName + "/hdg_link";
+	attFrame = robotName + "/att_link";
 
 	ROS_INFO( "Ouput Frame (base_link): %s", baseFrame.c_str() );
 	ROS_INFO( "Ouput Frame (hdg_link): %s", flatFrame.c_str() );
 	ROS_INFO( "Ouput Frame (attitude): %s", attFrame.c_str() );
 
 	//Initialize TF
-	tf::TransformListener tfln;
-	tf::TransformBroadcaster tfbr;
+	tfbr = new tf::TransformBroadcaster();
 
-	ros::Rate rate(loopRate);
-
-	bool tfReady = false;
+	ros::Subscriber waypoint_sub = nh.subscribe<geometry_msgs::TransformStamped>
+		(inputFrame, 10, pos_cb);
 
 	ROS_INFO( "Waiting for transforms..." );
 
-	while( ros::ok() && !tfReady ) {
-		tfReady = tfln.waitForTransform( localFrame, inputFrame, ros::Time::now(), ros::Duration(1.0) );
-		ros::spinOnce();
-		rate.sleep();
-	}
-
-	sleep(1);	//Just to let the TF buffer fill a little
-
-	ROS_INFO( "...Broadcasting!" );
-	sendData = true;
-
-	//================================//
-	// Main Loop                      //
-	//================================//
-	while( ros::ok() ) {
-
-		tf::StampedTransform worldTransform;
-		tf::Transform baseTransform;
-		tf::Transform flatTransform;
-		tf::Transform attTransform;
-
-		ros::Time readTime = ros::Time::now();
-		//========================================================================
-
-		try {
-			//Wait a maximum of 1 timestep for the new rotation
-			tfln.waitForTransform(localFrame, inputFrame, readTime, ros::Duration(1/loopRate));
-			tfln.lookupTransform(localFrame, inputFrame, readTime, worldTransform);
-		}
-
-		catch (tf::TransformException ex) {
-			ROS_ERROR( "%s",ex.what() );
-			sendData = false;
-		}
-
-		if( sendData ) {
-			//base_link		================================================================
-			baseTransform.setOrigin( worldTransform.getOrigin() );
-
-			baseTransform.setRotation( tf::Quaternion(0.0, 0.0, 0.0, 1.0) ); //Set it to zero heading
-
-			//flat_link		================================================================
-			flatTransform.setOrigin( tf::Vector3(0.0, 0.0, 0.0) );
-
-			geometry_msgs::Vector3 rot;
-			tf::Matrix3x3(worldTransform.getRotation()).getRPY(rot.x, rot.y, rot.z);
-			flatTransform.setRotation(tf::createQuaternionFromYaw(rot.z));
-
-			//att_link		================================================================
-			attTransform.setOrigin( tf::Vector3(0.0, 0.0, 0.0) );
-
-			attTransform.setRotation(worldTransform.getRotation());
-
-			//Send Transforms	============================================================
-			tfbr.sendTransform( tf::StampedTransform( baseTransform, readTime, localFrame, baseFrame ) );
-			tfbr.sendTransform( tf::StampedTransform( flatTransform, readTime, baseFrame, flatFrame ) );
-			tfbr.sendTransform( tf::StampedTransform( attTransform, readTime, baseFrame, attFrame ) );
-
-			//Info			================================================================
-		} else {
-			ROS_ERROR_THROTTLE(1.0, "Some data cannot be obtained, not publishing data..." );
-		}
-
-		//Sleep				================================================================
-		rate.sleep();
-		ros::spinOnce();
-	}
+	ros::spin();
 
 	return 0;
 }
